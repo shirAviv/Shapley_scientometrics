@@ -1,46 +1,197 @@
 import pandas as pd
+import os
 import itertools
 from scipy import misc
 import math
 import numpy as np
-from pybliometrics.scopus import AuthorRetrieval
+# from pybliometrics.scopus import AuthorRetrieval
+import random
+from datetime import date,datetime,timedelta
+from fractional_and_full_value import Fractional_And_Full_value
+from journals import Journals
 
 
 
+class Journal_shapley_value_full_star:
+    eps = 0.05
+    delta = 0.05
+    all_permutations = dict()
+    duplicate_permutations_counter = 0
+    all_coalitions = dict()
+    duplicate_coalitions_counter = 0
+    num_pcs=15
 
-class Journal_shapley:
+    def init_permutations(self):
+        self.duplicate_permutations_counter = 0
+        for idx in range(0, 500):
+            self.all_permutations[idx] = list()
+        self.duplicate_coalitions_counter = 0
+        for idx in range(0, 100):
+            self.all_coalitions[idx] = set()
+
     def extract_data(self, file):
         df=pd.read_csv(file)
-    
-        # df=df.loc[df['Document Type'].isin(['Article','Review'])]
+        df=df.loc[df['Document Type'].isin(['Article','Review'])]
+        df['Cited by']=df['Cited by'].fillna(0)
         print(df.head())
         return df
 
+    '''
     def remove_low_citation_papers(self, df):
-        df1=df[df.loc[:,'Cited by']>13].copy()
+        df1=df[df.loc[:,'Cited by']>10].copy()
         return df1
+    '''
+    def get_authors_df(self,df):
+        authors = set(''.join(list(df.loc[:, 'Author(s) ID'])).split(';'))
+        authors.remove('')
+        authors_df = pd.DataFrame(columns=['Author Name', 'Author Id', 'papers','Num papers', 'Num citations', 'Coauthors'])
+        index = 0
 
-    def remove_authors_with_low_num_papers(self,df):
-        df1=df.copy()
-        papers_for_removal=set()
-        for idx, paper in df.iterrows():
-            authors_ids=paper['Authors IDs'].split(';')
-            authors_ids.remove('')
-            remove=False
-            for author in authors_ids:
-                num_papers_by_author=len(df[df['Authors IDs'].str.contains(author)])
-                if num_papers_by_author<0:
-                    remove=True
-                    break
-            if remove:
-                papers_for_removal.add(idx)
+        for author in authors:
+            author_data = df[df['Author(s) ID'].str.contains(author)]
+            author_papers = author_data.index.values
+            author_citations = author_data.loc[:, 'Cited by'].values
+            zero_citations=True
+            # for citation in author_citations:
+            #     if citation>3:
+            #         zero_citations=False
+            #         break
+            # if zero_citations:
+            #     continue
+            paper_count = len(author_papers)
 
-        df1.drop(papers_for_removal, inplace=True)
-        df1.reset_index(inplace=True)
-        return df1
+            id_location = list(author_data['Author(s) ID'].str.split(';').values)[0].index(author)
+            author_name = list(author_data['Authors'].str.split(',').values)[0][id_location].strip()
+            author_coauthors = pd.DataFrame(author_data.loc[:, 'Author(s) ID']).copy()
+            record = {'Author Name': author_name, 'Author Id': author, 'papers': author_papers,'Num papers':paper_count,
+                      'Num citations': author_citations, 'Coauthors': author_coauthors['Author(s) ID'].values}
+            authors_df = authors_df.append(record, ignore_index=True)
+        return authors_df
+
+    def gen_permutation(self,authors_df, size=0):
+        permutation = list(authors_df.loc[:, 'Author Id'])
+        exists = True
+        while exists:
+            random.shuffle(permutation)
+            # for author in authors:
+            #     val=random.getrandbits(1)
+            #     if val:
+            #         permutation.append(author)
+            exists = self.does_permutation_exist(permutation)
+        return permutation
+
+    def does_permutation_exist(self,permutation):
+        permutation_size=len(permutation)
+        permutations_of_size=self.all_permutations[permutation_size]
+        if permutation in permutations_of_size:
+            self.duplicate_permutations_counter+=1
+            # print('permutation already exists')
+            return True
+        else:
+            self.all_permutations[permutation_size].append(permutation)
+            return False
 
 
+    '''
+    def confidence_shapley(self,df_authors, column_name, permutation_size=0):
+        authors = set(df_authors.loc[:, 'Author Id'])
+        for author in authors:
+            self.init_permutations()
+            shapley,confidence_interval_min,confidence_interval_max=self.confidence_shapley_single_author(df_authors,author, permutation_size)
+            authors_df.loc[authors_df['Author Id'] == author, column_name] = shapley
+            print('for author {} shapley is {} and interval is [{},{}]'.format(author,shapley,confidence_interval_min,confidence_interval_max))
+            print('num dups created {}'.format(self.duplicate_permutations_counter))
+    '''
 
+    def value_single_permutation_frac(self,permutation, authors_df, current_author):
+        total_val = 0
+        # authors_val = dict()
+        for author_id in permutation:
+            # authors_val[author_id] = 0
+            author_data = authors_df[authors_df['Author Id'] == author_id]
+            # if author_data['Num papers'].values[0] > 1:
+            #     print('more than 1 paper')
+            authors_contrib = 0
+            for idx, paper_citations in enumerate(author_data['Num citations'].values[0]):
+                # count_coauthors_in_current_subset=0
+                coauthors_set = set()
+                coauthors = author_data['Coauthors'].iloc[0][idx].split(';')
+                coauthors.remove('')
+                coauthors.remove(author_id)
+                coauthors_set.update(set(coauthors))
+                num_coauthors = len(coauthors_set)
+                count_coauthors_in_current_subset = len(coauthors_set.intersection(permutation))
+
+                # if  not author_id in coauthors_set:
+                authors_contrib += paper_citations / (count_coauthors_in_current_subset + 1)
+
+                # authors_contrib += paper_citations / (num_coauthors + 1)
+            if current_author==author_id:
+                current_author_contrib=authors_contrib
+                # authors_val[author_id] += authors_contrib
+            total_val += authors_contrib
+                # else:
+                #     print('co author found')
+        value = total_val / num_papers
+        if value>self.q4_quota:
+            # print('over quota - subset {}'.format(permutation))
+            # for author,author_val in authors_val.items():
+            if value-(current_author_contrib/num_papers)<self.q4_quota:
+                # print('author {} is critical'.format(current_author))
+                authors_df.loc[authors_df['Author Id'] == current_author,'Num critical permutations']+=1
+                return True
+        return False
+
+
+    def value_single_permutation_full(self,permutation, authors_df, column_name):
+        # num_combinations = self.calc_num_combinations(len(authors_df) - 1, len(permutation)-1)
+        value_coalition_without_current_author=0
+        total_val = 0
+        papers=set()
+        for author_id in permutation:
+
+            author_data = authors_df[authors_df['Author Id'] == author_id]
+            authors_contrib = 0
+            # sum up citations for current author, only for papers not counted yet
+            for idx, paper_id in enumerate(author_data['papers'].values[0]):
+                if not paper_id in papers:
+                    authors_contrib += author_data['Num citations'].values[0][idx]
+                    papers.add(paper_id)
+
+            total_val += authors_contrib
+
+            value_coalition_with_current_author = total_val / len(papers)
+            author_marginal_contribution = (value_coalition_with_current_author - value_coalition_without_current_author)
+            authors_df.loc[authors_df['Author Id'] == author_id, column_name] += author_marginal_contribution
+            value_coalition_without_current_author=value_coalition_with_current_author
+
+
+    def confidence_shapley(self,df_authors, column_name):
+        self.init_permutations()
+
+        x=0
+        k=0
+
+        min_num_samples=(2*math.pow(citation_to_papers_ratio,2)*math.log(2/self.delta,math.e))/(math.pow(self.eps,2))
+        min_num_samples=min_num_samples/self.num_pcs
+        # min_num_samples=10000
+        print('min num samples {}'.format(min_num_samples))
+        val = 0
+
+        while k<min_num_samples:
+            permutation=self.gen_permutation(df_authors)
+            # permutation=self.gen_permutation(df_authors,current_author, size=0)
+
+            # if len(permutation)<10:
+            #     print('permutation size {}'.format(len(permutation)))
+            self.value_single_permutation_full(permutation,df_authors, column_name=column_name)
+            if k%5000==0:
+                print('num samples is {}'.format(k))
+            k+=1
+        authors_df[column_name]=authors_df[column_name]/min_num_samples
+        return
+
+'''
     def calc_authors_shapley_num_papers(self,df):
         authors=set(''.join(list(df.loc[:,'Authors IDs'])).split(';'))
         authors.remove('')
@@ -224,132 +375,47 @@ class Journal_shapley:
             frac = author_data['Fractional']
             df_complete.loc[df_complete['Author Id']==author,'Fractional Normalized']=frac
 
-    def add_full_normalized_contrib_to_df(self,df_complete,df_full):
-        df_complete['Full Normalized']=0
-        for idx, author_data in df_full.iterrows():
-            author = author_data.loc['Author Id']
-            full = author_data['Full']
-            df_complete.loc[df_complete['Author Id']==author,'Full Normalized']=full
-
-    def add_ban_fractional_contrib(self,df_complete,df_ban):
-        df_complete['Ban Fractional']=0
-        df_complete['Ban Fractional Num critical coalitions'] = 0
-
-        for idx, author_data in df_ban.iterrows():
-            author = author_data.loc['Author Id']
-            ban = author_data['banzhaf']
-            df_complete.loc[df_complete['Author Id']==author,'Ban Fractional']=ban
-            ban_coalitions = author_data['Num critical coalitions']
-            df_complete.loc[df_complete['Author Id'] == author, 'Ban Fractional Num critical coalitions'] = ban_coalitions
-
-    def add_shap_fractional_contrib(self,df_complete,df_shap):
-        df_complete['Shap Fractional']=0
-        df_complete['Shap Fractional Num critical permutations'] = 0
-
-        for idx, author_data in df_shap.iterrows():
-            author = author_data.loc['Author Id']
-            shap = author_data['shapley']
-            df_complete.loc[df_complete['Author Id']==author,'Shap Fractional']= shap
-            shap_coalitions = author_data['Num critical permutations']
-            df_complete.loc[df_complete['Author Id'] == author, 'Shap Fractional Num critical permutations'] = shap_coalitions
-
-    def add_ban_full_contrib(self,df_complete,df_ban):
-        df_complete['Ban Full']=0
-        df_complete['Ban Full Num critical coalitions'] = 0
-
-        for idx, author_data in df_ban.iterrows():
-            author = author_data.loc['Author Id']
-            ban = author_data['banzhaf']
-            df_complete.loc[df_complete['Author Id']==author,'Ban Full']=ban
-            ban_coalitions = author_data['Num critical coalitions']
-            df_complete.loc[df_complete['Author Id'] == author, 'Ban Full Num critical coalitions'] = ban_coalitions
-
-    def add_shap_full_contrib(self,df_complete,df_shap):
-        df_complete['Shap Full']=0
-        df_complete['Shap Full Num critical permutations'] = 0
-
-        for idx, author_data in df_shap.iterrows():
-            author = author_data.loc['Author Id']
-            shap = author_data['shapley']
-            df_complete.loc[df_complete['Author Id']==author,'Shap Full']= shap
-            shap_coalitions = author_data['Num critical permutations']
-            df_complete.loc[df_complete['Author Id'] == author, 'Shap Full Num critical permutations'] = shap_coalitions
-
-    def add_ban_relative_contrib(self,df_complete,df_ban):
-        df_complete['Ban Relative']=0
-        df_complete['Ban Relative Num critical coalitions'] = 0
-
-        for idx, author_data in df_ban.iterrows():
-            author = author_data.loc['Author Id']
-            ban = author_data['banzhaf']
-            df_complete.loc[df_complete['Author Id']==author,'Ban Relative']=ban
-            ban_coalitions = author_data['Num critical coalitions']
-            df_complete.loc[df_complete['Author Id'] == author, 'Ban Relative Num critical coalitions'] = ban_coalitions
-
-    def add_shap_relative_contrib(self,df_complete,df_shap):
-        df_complete['Shap Relative']=0
-        df_complete['Shap Relative Num critical permutations'] = 0
-
-        for idx, author_data in df_shap.iterrows():
-            author = author_data.loc['Author Id']
-            shap = author_data['shapley']
-            df_complete.loc[df_complete['Author Id']==author,'Shap Relative']= shap
-            shap_coalitions = author_data['Num critical permutations']
-            df_complete.loc[df_complete['Author Id'] == author, 'Shap Relative Num critical permutations'] = shap_coalitions
-
+'''
 
 if __name__ == '__main__':
-    file_path='C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\IS\\Shapley_value\\'
-    test_file_path=file_path+'test\\Test_data.csv'
-    # file_path = 'C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\IS\\ASLIB_Journal_of_info_manage\\'
-    # file_path1 = file_path + 'shapley_value\\authors_cites_over_3_complete.csv'
+    journals=Journals()
+    name=journals.dirsIS[6]
+    file_name=journals.file_path+name+'\\'+name+'.csv'
+    print(file_name)
+    js=Journal_shapley_value_full_star()
+    df=js.extract_data(file_name)
+    authors_df = js.get_authors_df(df)
+    ffv = Fractional_And_Full_value()
+    ffv.get_authors_fractional_values(authors_df)
+    ffv.get_authors_full_values(authors_df)
 
-    js=Journal_shapley()
-    df=js.extract_data(test_file_path)
-    # file_path2 = file_path + 'shapley_value\\full_values_cites_over_3_normalized.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_full_normalized_contrib_to_df(df,df2)
-    # file_path2 = file_path + 'shapley_value\\fractional_values_cites_over_3.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_fractional_contrib_to_df(df,df2)
-    # file_path2 = file_path + 'shapley_value\\fractional_values_cites_over_3_normalized.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_fractional_normalized_contrib_to_df(df,df2)
-    # file_path2 = file_path + 'power_index\\ban_fractional_10_30_005_cites_over_3_q4.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_ban_fractional_contrib(df,df2)
-    # file_path2 = file_path + 'power_index\\shap_fractional_10_30_005_cites_over_3_q4.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_shap_fractional_contrib(df,df2)
-    # file_path2 = file_path + 'power_index\\ban_full_4_18_005_cites_over_3_q4.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_ban_full_contrib(df, df2)
-    # file_path2 = file_path + 'power_index\\shap_full_4_18_005_cites_over_3_q4.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_shap_full_contrib(df, df2)
-    # file_path2 = file_path + 'power_index\\ban_relative_10_30_005_cites_over_3_q4.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_ban_relative_contrib(df, df2)
-    # file_path2 = file_path + 'power_index\\shap_relative_10_30_005_cites_over_3_q4.csv'
-    # df2 = js.extract_data(file_path2)
-    # js.add_shap_relative_contrib(df, df2)
+    authors_df['citation_to_papers_ratio']=authors_df['Full']/authors_df['Num papers']
+    print(authors_df.sort_values(by='citation_to_papers_ratio').tail(10))
+    # citation_to_papers_ratio = authors_df['citation_to_papers_ratio'].max()
+    citation_to_papers_ratio=55
+    print('num authors {}'.format(len(authors_df)))
+    print(citation_to_papers_ratio)
+    # for perm_size in [5,10,50,100,200,400]:
+    #     column_name='shapley_'+str(perm_size)
+    #     authors_df[column_name] = 0
+    column_name='Shapley_star'
+    authors_df[column_name]=0
+    print(datetime.now())
+    js.confidence_shapley(authors_df, column_name=column_name)
+    authors_df = authors_df.sort_values(by=column_name, ascending=False)
+    print(authors_df)
+    print(authors_df[column_name].sum())
+    # authors_df.to_csv('shap_subsets_10_2.csv')
+    authors_df.to_csv(file_path+name+'\\_'+os.environ['COMPUTERNAME']+'_shap_full_star_all_authors.csv')
+    print(datetime.now())
 
-    # js.get_authors_hindex_affiliation(df)
-    # df.to_csv(file_path1)
-    # exit(0)
 
-    df_for_shapley_papers=js.remove_authors_with_low_num_papers(df)
-    authors_df=js.calc_authors_shapley_num_papers(df_for_shapley_papers)
-    authors_df=authors_df.sort_values(by="Shapley - Num papers",ascending=False)
-
-    # js.get_authors_hindex_affiliation(authors_df)
-    # authors_df.to_csv('C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\PUCScopus_2019_Shapley_num_papers.csv')
-    authors_df.to_csv(file_path+'\\test\\Test_data_shapley.csv')
     exit(0)
 
-    df_for_shapley_citation=js.remove_low_citation_papers(df)
-    authors_df=js.calc_authors_shapley_num_citations(df_for_shapley_citation)
-    authors_df=authors_df.sort_values(by="Shapley - Num citations",ascending=False)
+    # df_for_shapley_papers=js.remove_authors_with_low_num_papers(df)
+
+    # authors_df=js.calc_authors_shapley_num_citations(df)
+    # authors_df=authors_df.sort_values(by="Shapley - Num citations",ascending=False)
     # js.get_authors_hindex_affiliation(authors_df)
-    authors_df.to_csv('C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\PUCScopus_2019_Shapley_citations.csv')
+    # authors_df.to_csv('C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\PUCScopus_2019_Shapley_full_star_citations.csv')
     # js.calc_total_combinations(21)

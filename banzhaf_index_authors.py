@@ -34,7 +34,13 @@ class Banzhaf_index:
             author_data = df[df['Author(s) ID'].str.contains(author)]
             author_papers = author_data.index.values
             author_citations = author_data.loc[:, 'Cited by'].values
-
+            zero_citations = True
+            for citation in author_citations:
+                if citation > 9:
+                    zero_citations = False
+                    break
+            if zero_citations:
+                continue
             paper_count = len(author_papers)
 
             id_location = list(author_data['Author(s) ID'].str.split(';').values)[0].index(author)
@@ -44,6 +50,7 @@ class Banzhaf_index:
                       'Num citations': author_citations, 'Coauthors': author_coauthors['Author(s) ID'].values}
             authors_df = authors_df.append(record, ignore_index=True)
         return authors_df
+
 
     def get_subsets(self,df):
         authors_ids=list(df['Author Id'])
@@ -70,9 +77,11 @@ class Banzhaf_index:
                 count_coauthors_in_current_subset=len(coauthors_set.intersection(subset))
 
                 # if  not author_id in coauthors_set:
-                authors_contrib+=paper_citations[0]/(count_coauthors_in_current_subset+1)
-                authors_val[author_id]+=authors_contrib
-                total_val+=authors_contrib
+                # authors_contrib+=paper_citations[0]/(count_coauthors_in_current_subset+1)
+                authors_contrib+=paper_citations[0]/(num_coauthors+1)
+
+            authors_val[author_id]+=authors_contrib
+            total_val+=authors_contrib
                 # else:
                 #     print('co author found')
         value=total_val/num_papers
@@ -94,14 +103,16 @@ class Banzhaf_index:
 if __name__ == '__main__':
     start_time = datetime.now()
     print(start_time)
-    file_path='C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\IS\\Shapley_index\\ASLIB_Journal_of_info_manage\\ASLIB_Journal_of_info_manage_2018-2021_scopus.csv'
+    file_path='C:\\Users\\Shir\\OneDrive - Bar Ilan University\\research\\Journals_data\\IS\\ASLIB_Journal_of_info_manage\\ASLIB_Journal_of_info_manage_2018-2021_scopus.csv'
     bi=Banzhaf_index()
-    df=bi.extract_data(file_path)
-    num_papers=len(df)
-    df_for_banzhaf=bi.remove_low_citation_papers(df)
-
-    authors_df=bi.get_authors_df(df_for_banzhaf)
-    authors_df['Num critical coalitions']=0
+    df = bi.extract_data(file_path)
+    num_papers = len(df)
+    print('num papers is {}'.format(num_papers))
+    # df_for_banzhaf=bi.remove_low_citation_papers(df)
+    df_for_banzhaf = df
+    authors_df = bi.get_authors_df(df_for_banzhaf)
+    authors_df['Num critical coalitions'] = 0
+    authors_df['banzhaf'] = 0
     subsets=bi.get_subsets(authors_df)
     bi.iterate_subsets(authors_df,subsets)
     authors_df = authors_df.sort_values(by="Num critical coalitions", ascending=False)

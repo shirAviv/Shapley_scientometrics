@@ -13,8 +13,8 @@ import random
 class Banzhaf_index:
     q4_quota=0.4
     q2_quota=2.2
-    eps=0.01
-    delta=0.01
+    eps=0.005
+    delta=0.005
     all_coalitions=dict()
     duplicate_coalitions_counter=0
 
@@ -78,7 +78,7 @@ class Banzhaf_index:
         else:
             exists=True
             while exists:
-                size=random.randint(4,16)
+                size=random.randint(10,30)
                 coalition = set(random.sample(authors, size - 1))
                 while current_author in coalition:
                     coalition = set(random.sample(authors, size-1))
@@ -133,9 +133,9 @@ class Banzhaf_index:
                 count_coauthors_in_current_subset = len(coauthors_set.intersection(coalition))
 
                 # if  not author_id in coauthors_set:
-                # authors_contrib += paper_citations / (count_coauthors_in_current_subset + 1)
+                authors_contrib += paper_citations / (count_coauthors_in_current_subset + 1)
 
-                authors_contrib += paper_citations / (num_coauthors + 1)
+                # authors_contrib += paper_citations / (num_coauthors + 1)
             if current_author==author_id:
                 current_author_contrib=authors_contrib
                 # authors_val[author_id] += authors_contrib
@@ -162,7 +162,7 @@ class Banzhaf_index:
         min_num_samples=math.log(2/self.delta,math.e)/(2*math.pow(self.eps,2))
         print('min num samples {}'.format(min_num_samples))
         while k<min_num_samples:
-            coalition=self.gen_coalition(df_authors,current_author, size=30)
+            coalition=self.gen_coalition(df_authors,current_author, size=0)
             # if len(coalition)<10:
             #     print('coalition size {}'.format(len(coalition)))
             k+=1
@@ -252,8 +252,8 @@ if __name__ == '__main__':
     bi.confidence_banzhaf(authors_df)
     authors_df = authors_df.sort_values(by="Num critical coalitions", ascending=False)
     print(authors_df)
-    authors_df.to_csv('ban_noa.csv')
-    # authors_df.to_csv('ban_4_16_005_cites_over_3_q4.csv')
+    # authors_df.to_csv('ban_noa.csv')
+    authors_df.to_csv('ban_relative_10_30_005_cites_over_3_q4.csv')
 
     exit(0)
 
